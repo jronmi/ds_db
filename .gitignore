@@ -1,0 +1,6 @@
+airflow/logs
+airflow/airflow.db
+airflow/webserver_config.py
+.env
+**/__pycache__/
+
