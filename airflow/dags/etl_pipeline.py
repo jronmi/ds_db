@@ -43,8 +43,35 @@ def etl_pipeline():
     so there is no 'transform' task currently
     """
 
+    def clear(symbol: str):
+        """
+        #### Clear
+        A function which removes all remaining entries of a given symbol from the queue.
+        To be used when a syntax error or an implicit error (returns default first month)
 
-    def pop_queue(): 
+        params:
+            symbol: the symbol to be cleared
+        """
+        connection = pymysql.connect(
+            host=HOST,
+            user=USERNAME,
+            password=PASSWORD,
+            db=DB_NAME,
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        table = "queue"
+
+        with connection.cursor() as cursor:
+            delete_items_sql = f"""
+            DELETE FROM {table}
+            WHERE symbol='{symbol}'"""
+
+            cursor.execute(delete_items_sql)
+
+            connection.commit()
+            connection.close()
+
+    def pop_queue():
         """
         #### Pop Queue
         Determine which symbol and month pair to extract next by popping it
@@ -86,7 +113,6 @@ def etl_pipeline():
 
             return items
 
-    
     def extract(items) -> pd.DataFrame:
         """
         #### Extract task
@@ -102,36 +128,68 @@ def etl_pipeline():
          - month: the month of data to be fetched. YYYY-MM format
         """
         dataframes = []
-
         api = av.API(AV_API_KEY)
+
+        def call_api(symbol, month):
+            data, meta_data = api.time_series_intraday(
+                symbol, month=month, interval="1min", outputsize="full"
+            )
+            data["symbol"] = symbol
+            dataframes.append(data)
+
         for symbol, month in items:
             try:
-                data, meta_data = api.time_series_intraday(
-                    symbol, month=month, interval="1min", outputsize="full"
-                )
-                data["symbol"] = symbol
-                dataframes.append(data)
-                
+                call_api(symbol, month)
             except av.AlphaVantageError as e:
                 print(e)
                 if "frequency" in str(e):
-                    sleep(60)  # sleep for 1 min if over api limit
-                    data, meta_data = api.time_series_intraday(
-                        symbol, month=month, interval="1min", outputsize="full"
-                    )
-                    data["symbol"] = symbol
-                    dataframes.append(data)
+                    sleep(60)  # sleep for 1 min if over api limit\
+                    call_api(symbol, month)
                 # else: interpret as syntax error
 
         if len(dataframes) > 0:
             return pd.concat(dataframes)
         else:
-            return pd.DataFrame()
+            return pd.DataFrame()  # TODO: does this make sense?
 
-    
+    def transform(data: pd.DataFrame):
+        """
+        We remove duplicate items as those in the table so that we can use
+        a composit primary key (Symbol, Date)
+        params:
+            the data which needs to be removed of duplicates
+        """
+
+        connection = pymysql.connect(
+            host=HOST,
+            user=USERNAME,
+            password=PASSWORD,
+            db=DB_NAME,
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+        table = "av_minute_data"
+
+        with connection.cursor() as cursor:
+            keys = [(row["symbol"], row["date"]) for row in data]
+
+            check_duplicate_sql = f"""
+            SELECT symbol, date FROM {table}
+            WHERE (symbol, date) in {*keys,}"""
+
+            cursor.execute(check_duplicate_sql)
+            duplicates = cursor.fetchall()
+            duplicates = {(item["symbol"], item["date"]) for item in duplicates}
+
+            data = data[~data[["symbol", "date"]]].apply(tuple, axis=1).isin(duplicates)
+
+            connection.commit()
+            connection.close()
+
+            return data
+
     def load(data: pd.DataFrame):
         """
-        temporarily print
+        load dataframe into the sql table
         """
         url = f"mysql+pymysql://{USERNAME}:{PASSWORD}@{HOST}/{DB_NAME}"
         engine = sqlalchemy.create_engine(url)
@@ -140,8 +198,10 @@ def etl_pipeline():
 
     @task
     def fetch():
+        # maybe make these tasks and store data in buffer table
         items = pop_queue()
         data = extract(items)
+        data = transform(data)
         load(data)
 
     fetch()

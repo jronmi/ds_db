@@ -3,4 +3,6 @@ airflow/airflow.db
 airflow/webserver_config.py
 .env
 **/__pycache__/
+.python-version
+venv
 
