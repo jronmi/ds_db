@@ -87,7 +87,7 @@ def etl_pipeline():
             cursorclass=pymysql.cursors.DictCursor,
         )
         table = "queue"
-        limit = 30
+        limit = 2
         # no try block --> so task retries
         with connection.cursor() as cursor:
             get_item_sql = f"""
@@ -105,6 +105,7 @@ def etl_pipeline():
             drop_item_sql = f"""
             DELETE FROM {table}
             where id in {*ids,};"""
+            print(drop_item_sql)
 
             cursor.execute(drop_item_sql)
 
@@ -160,6 +161,7 @@ def etl_pipeline():
             the data which needs to be removed of duplicates
         """
 
+
         connection = pymysql.connect(
             host=HOST,
             user=USERNAME,
@@ -170,7 +172,9 @@ def etl_pipeline():
         table = "av_minute_data"
 
         with connection.cursor() as cursor:
-            keys = [(row["symbol"], row["date"]) for row in data]
+            # duplicate date index as column for easier manipulation
+            data["date"] = data.index
+            keys = [(row["symbol"], row["date"]) for _, row in data.iterrows()]
 
             check_duplicate_sql = f"""
             SELECT symbol, date FROM {table}
@@ -180,7 +184,9 @@ def etl_pipeline():
             duplicates = cursor.fetchall()
             duplicates = {(item["symbol"], item["date"]) for item in duplicates}
 
-            data = data[~data[["symbol", "date"]]].apply(tuple, axis=1).isin(duplicates)
+            data = data[~data[["symbol", "date"]].apply(tuple, axis=1).isin(duplicates)]
+            # delete column to maintain shape 
+            del data["date"]
 
             connection.commit()
             connection.close()
