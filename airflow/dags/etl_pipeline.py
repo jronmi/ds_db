@@ -43,7 +43,7 @@ def etl_pipeline():
     so there is no 'transform' task currently
     """
 
-    @task()
+
     def pop_queue(): 
         """
         #### Pop Queue
@@ -86,7 +86,7 @@ def etl_pipeline():
 
             return items
 
-    @task()
+    
     def extract(items) -> pd.DataFrame:
         """
         #### Extract task
@@ -128,7 +128,7 @@ def etl_pipeline():
         else:
             return pd.DataFrame()
 
-    @task()
+    
     def load(data: pd.DataFrame):
         """
         temporarily print
@@ -138,9 +138,13 @@ def etl_pipeline():
         table = "av_minute_data"
         data.to_sql(table, engine, if_exists="append")
 
-    items = pop_queue()
-    data = extract(items)
-    load(data)
+    @task
+    def fetch():
+        items = pop_queue()
+        data = extract(items)
+        load(data)
+
+    fetch()
 
 
 etl_pipeline()
